@@ -9,9 +9,15 @@ output: html_notebook
 ```{r}
 #load libraries 
 
+library(tidyverse)
+
 #load in the data here 
 # we will only be using the "street-addresses.csv" file from the text
 
+
+download.file(url="https://mdbeckman.github.io/dcSupplement/data/CMS_ProvidersSimple.rds",
+              destfile = "CMSProviders.rds")
+CMSProviders <- readRDS("CMSProviders.rds")
 
 
 ```
@@ -20,24 +26,57 @@ output: html_notebook
 
 ```{r}
 
+Addresses <- read_csv("https://mdbeckman.github.io/dcSupplement/data/street-addresses.csv")
+Sample <- 
+  Addresses %>%
+  sample_n(size = 50)
+
+Matches <- Sample |>
+  filter(grepl(pattern = "PO", address))
+
+Dont <- Sample |>
+  filter(!grepl(pattern = "PO", address))
+
+# It looks like the `PO` pattern doesn't capture any non-PO Box addresses, but it does miss the locations under the name "NCSU Box," and there seem to be quite a few locations with similar names. As the textbook notes, `box` might be a more accurate pattern.
+
+pattern <- "BOX\\s+(\\d+)"
+
+Matches <- 
+  Sample %>% 
+  filter(grepl(pattern, address))
+
+Dont <-
+  Sample %>%
+  filter(!grepl(pattern, address))
+
+
+POBoxNumbers <- Matches |>
+  tidyr::extract(address, into = "boxnum", regex = pattern)
 
 ```
 
-## Recreate Soved Example using the entire `Address` data set
+## Recreate Solved Example using the entire `Address` data set
 
 ```{r}
+FullMatches <- Addresses |>
+  filter(grepl(pattern, address))
 
+FullDont <- Addresses |>
+  filter(grepl(pattern, address))
 
+AllPOBoxNumbers <- FullMatches |>
+  tidyr::extract(address, into = "boxnum", regex = pattern)
+
+AllPOBoxNumbers |> head(10)
 ```
 
 #### Additional Question: How many addresses are a PO BOX (including NCSU BOX)? 
 
 ```{r}
-
-
+length(AllPOBoxNumbers$boxnum)
 ```
 
-My answer here...... 
+There are 11,100 PO BOX addresses, including NSCU BOX, in this set.
 
 
 ## Back to the Streets: Your Turn
@@ -45,31 +84,55 @@ My answer here......
 #### Part 1: Explain (in english) each line of the following code chunk
 
 ```{r}
-pattern <- "(ST|RD|ROAD)"
+pattern <- "(ST|RD|ROAD|CIRCLE|WAY|TRAIL|LANE|DR|AVENUE|AVE|LN|TR|PKWY|CT|CIR|OAK|HALL|UNIVERSITY|COURT|PATH|POINT|BLVD|PL|LOOP|SQUARE|HWY|RUN|CREEK)\\b"
 LeftOvers <-
   Addresses %>% 
   filter( !grepl(pattern, address),
           !grepl("\\sAPT|UNIT\\s[\\d]+$", address),
-          !grepl(" BOX ", address)
+          !grepl("BOX", address),
+          !grepl("B0X", address) # There are entries with "B0X" instead of "BOX", so this checks for that too.
+          # There are several followup patterns I can address here, such as AVE, PKWY, LN, TR, etc.
           )
 ```
 
-My answer here.......
+The first line defines a regex pattern we plan to filter our address set on. In this case, it requires that each passing entry matches "ST", "RD", or "ROAD".
+
+The next statement produces a new address set by filtering through the original set. The filter clause basically states that if the address doesn't have a "ST", "RD", or "ROAD", doesn't match an apartment unit (\\s refers to a string and \\d and + make up the number. The $ matches the end of the string), and isn't a PO BOX, keep the address in our new set.
+
+The Textbook uses this as a way to test our pattern for "holes," ensuring that it adequately captures all desired addresses.
 
 #### Part 2: Implement your method on the entire `Addresses` data set. Explain how your code works line by line.
 
 ```{r}
+tokens <-c("ST", "RD", "ROAD", "CIRCLE", "WAY", "TRAIL", "LANE","DR","AVENUE","AVE","LN","TR","PKWY","CT","CIR","OAK","HALL","UNIVERSITY","COURT","PATH","POINT","BLVD","PL","LOOP","SQUARE","HWY","RUN","CREEK")
 
+countForEachRoadWord <- tokens |>
+  map_df(function(word) {
+    pattern <- paste("\\b", word, "\\b", sep="")
+    count <- sum(grepl(pattern, Addresses$address))
+    tibble(word = word, count = count)
+  })
 
+meanAcrossRoadWords <- countForEachRoadWord |> summarise(mean = mean(count))
 
+Addresses |>
+  filter(grepl(pattern, address)) |>
+  summarize(count = n())
 ```
 
-My answer here.......
+Through this rudimentary pattern, we were able to gather that there are more than 4000 addresses that contain road words in this set. Each road word varied quite a bit in terms of usage across the addresses, from values as low as 2 and as high as 736, but it appears that the average count across road words is 131 occurrences in addresses per road word.
+
+I am not entirely sure what the textbook wants here, but here is my interpretation of what it's asking.
+
+First, I assemble a list of all the road words I identified in the previous exploration step. `map_df` is a function from `purrr`, and it's a regular HOF map function that you'd find in many other languages (applies a function to every element of a c collection). Within the map's argument function, I sum up the number of matches `grepl` finds in the addresses set and throw it into a tibble, and each element of the tokens list is mapped to a tibble in this manner. Additionally, the regex pattern here is pretty simple, being just the word with some markers to indicate that the word exclusively stands alone (won't partially match).
+
+This creates a set containing the occurrences of each road word in the set with the respective road word, but to get some useful information from it I summarized the table to get the mean and the total number of occurrences (131 and 4083 respectively).
 
 #### Additional Question 1: Present your result from part 2 by providing a table in descending order of popularity for the street name endings you found
 
 ```{r}
-
+countForEachRoadWord |>
+  arrange(desc(count))
 
 ```
 
@@ -78,9 +141,17 @@ My answer here.......
 Note: make sure your order street names according to popularity, not alphabetically.
 
 ```{r}
-
+countForEachRoadWord |>
+  filter(count > 50) |> # x axis items were cramped and illegible, so I spaced it out by filtration.
+  ggplot() +
+  geom_bar(mapping = aes(x = reorder(word, -count), y = count), stat = "identity", fill = "navy") +
+  labs(
+    x = "Road Words",
+    y = "Occurrences",
+    title = "Popular Address Endings by Popularity"
+  )
 ```
 
 #### Additional Question 3: Comment on any patterns you see
 
-My answer here.......
+A general trend I noticed is that, at least in this set, addresses seem to prefer a shortened version of a road word as opposed to its full name ("RD" instead of "ROAD", "DR" instead of "DRIVE", etc). Specically, the top 3 seem to exist in almost an entirely different scope (with their occurrences living in the multiple hundreds instead of the 0-200 range, where the rest seem to live). Interestingly enough, after the initial popular options, it seems like the rest kind of plateau around 50. I imagine this is partially due to me using 50 as my filtration cutoff, but its interesting to see the popularities drop from 700 to 50 so fast.
